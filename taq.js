@@ -72,7 +72,9 @@
     };
 
     Taq.addMacro(function (p) {
-        if (typeof p.value === "undefined") { p.value = '';}
+        if (typeof p.value === "undefined" && (p.index + 1 >= p.values.length) ) {
+           p.value = '';
+        }
     });
 
     Taq.addMacro(function (p) {
