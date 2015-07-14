@@ -3,9 +3,36 @@
 
     var templates = {},
         slice = Function.prototype.call.bind(Array.prototype.slice),
-        macros = [];
+        isArray = Array.isArray,
+        macros = [],
+        escapeMap = {
+              '&': '&amp;',
+              '<': '&lt;',
+              '>': '&gt;',
+              '"': '&quot;',
+              "'": '&#x27;',
+              '`': '&#x60;'
+        },
+        regSource = '(?:' + Object.keys(escapeMap).join('|') + ')',
+        testReg = new RegExp(regSource),
+        replaceReg = new RegExp(regSource, 'g');
 
-    class DataTemplate {
+    class EscapedNode {
+      constructor(value) {
+          this.value = value;
+      }
+
+      escape(unescaped) {
+          var mapper = function (match) { return this[match]; }.bind(escapeMap);
+          return testReg.test(unescaped) ? unescaped.replace(replaceReg, mapper) : unescaped;
+      }
+
+      toString() {
+          return this.escape(this.value.toString());
+      }
+    }
+
+    class DataNode {
         constructor (strings, values) {
             this.strings = strings;
             this.values = values;
@@ -17,7 +44,7 @@
     }
 
     function taq (strings) {
-        return new DataTemplate(strings, slice(arguments, 1));
+        return new DataNode(isArray(strings) ? strings : [strings], slice(arguments, 1));
     }
 
     function runMacros(p) {
@@ -80,10 +107,10 @@
     Taq.addMacro(function (p) {
       var whitespace, newStrings = [''];
 
-      if( Array.isArray(p.value) ) {
+      if( isArray(p.value) ) {
           whitespace = p.string.match(/\s*$/)[0];
           while ( newStrings.length < p.value.length ) newStrings.push(whitespace);
-          p.value = new DataTemplate(newStrings, p.value);
+          p.value = new DataNode(newStrings, p.value);
       }
     });
 }());
