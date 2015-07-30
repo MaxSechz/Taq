@@ -1,7 +1,8 @@
 (function() {
     'use strict';
 
-    var templates = {},
+    var taq, escape,
+        templates = {},
         slice = Function.prototype.call.bind(Array.prototype.slice),
         isArray = Array.isArray,
         macros = [],
@@ -15,45 +16,65 @@
         },
         regSource = '(?:' + Object.keys(escapeMap).join('|') + ')',
         testReg = new RegExp(regSource),
-        replaceReg = new RegExp(regSource, 'g');
+        replaceReg = new RegExp(regSource, 'g'),
+        getResult = function (context, property) {
+            return typeof context[property] === 'function' ? context[property]() : context[property];
+        };
 
-    class EscapedNode {
-      constructor(value) {
-          this.value = value;
-      }
-
-      escape(unescaped) {
-          var mapper = function (match) { return this[match]; }.bind(escapeMap);
-          return testReg.test(unescaped) ? unescaped.replace(replaceReg, mapper) : unescaped;
-      }
-
-      toString() {
-          return this.escape(this.value.toString());
-      }
+    function DataNode(strings, values) {
+        this.strings = strings;
+        this.values = values;
     }
 
-    class DataNode {
-        constructor (strings, values) {
-            this.strings = strings;
-            this.values = values;
+    DataNode.prototype.toString = function () {
+        return prime.apply(null, [this.strings].concat(this.values));
+    };
+
+    function EscapedNode(strings, values) {
+        this.strings = strings;
+        this.values = values;
+    }
+
+    EscapedNode.prototype.escape = function (unescaped) {
+        var mapper = function (match) { return this[match]; }.bind(escapeMap);
+        return testReg.test(unescaped) ? unescaped.replace(replaceReg, mapper) : unescaped;
+    };
+
+    EscapedNode.prototype.toString = function () {
+        var escaper = function (item) { return this.escape(item.toString()); }.bind(this),
+        values = this.values.map(escaper);
+
+        return prime.apply(null, [this.strings].concat(values));
+    };
+
+    function IfNode(condition, result) {
+        this.condition = condition;
+        this.result = result;
+    }
+
+    IfNode.prototype.else = function (condition, result) {
+        this.tail ? this.tail.addNode(condition, result) : this.addNode(condition, result);
+        return this;
+    };
+
+    IfNode.prototype.addNode = function (condition, result) {
+        if ( this.tail ) {
+            this.tail.addNode(condition, result);
+        } else {
+            this.tail = new IfNode(condition, result);
         }
+    };
 
-        toString () {
-            return taq.prime.apply(taq, [this.strings].concat(this.values));
+    IfNode.prototype.toString = function () {
+        var truthy = getResult(this, 'condition');
+        if ( truthy ) {
+            return this.result ? getResult(this, 'result').toString() : truthy.toString();
+        } else {
+            return this.tail ? this.tail.toString() : '';
         }
-    }
+    };
 
-    function taq (strings) {
-        return new DataNode(isArray(strings) ? strings : [strings], slice(arguments, 1));
-    }
-
-    function runMacros(p) {
-        for (var i = macros.length - 1; i > -1; i--) {
-          macros[i](p);
-        }
-    }
-
-    taq.prime = function (strings) {
+    function prime (strings) {
         var values = slice(arguments, 1);
 
         return strings.reduce(function (memo, currentString, index, stringsArray) {
@@ -74,37 +95,74 @@
 
             return memo + currentString + currentValue;
         }, '');
-    };
+    }
 
-    taq.partial = function (name, data) {
-        return Taq(name).bind(data)(taq);
-    };
-
-    window.Taq = function (tempName, tempFunc) {
-        if (arguments.length > 1) {
-            return templates[tempName] = tempFunc;
-        } else {
-            return Taq.template(templates[tempName]);
+    function runMacros(p) {
+        for (var i = macros.length - 1; i > -1; i--) {
+          macros[i](p);
         }
-    };
+    }
 
-    Taq.template = function (funToTemplate) {
+    function Taq() {
+        this.unescape();
+    }
+
+    Taq.prototype.template = function (name) {
         return function (data) {
-            return taq.prime`${funToTemplate.bind(data)(taq)}`;
+            return prime(['',''], taq.partial(name, data));
         };
     };
 
-    Taq.addMacro = function (macro) {
+    Taq.prototype.addTemplate = function (name, template) {
+        return templates[name] = template;
+    }
+
+    Taq.prototype.addMacro = function (macro) {
         macros.push(macro);
     };
 
-    Taq.addMacro(function (p) {
+    Taq.prototype.escape = function () {
+        escape = true;
+    };
+
+    Taq.prototype.unescape = function () {
+        escape = false;
+    };
+
+    function TaqHelper(){}
+    TaqHelper.prototype = {
+        danger: function (strings) {
+            return new DataNode(isArray(strings) ? strings : [strings], slice(arguments, 1));
+        },
+        safe: function (strings) {
+            return new EscapedNode(isArray(strings) ? strings : [strings], slice(arguments, 1));
+        },
+        partial: function (name, data) {
+            return templates[name].bind(data)( escape ? taq.safe : taq.danger );
+        },
+        if: function (condition, result) {
+            return new IfNode(condition, result);
+        }
+    };
+
+    Object.keys(TaqHelper.prototype).forEach(function (targetFunName, index, taqKeys) {
+        var targetFun = TaqHelper.prototype[targetFunName];
+
+        taqKeys.forEach(function (funName) {
+            targetFun[funName] = TaqHelper.prototype[funName];
+        });
+    });
+
+    taq = new TaqHelper();
+    window.Taq = new Taq();
+
+    window.Taq.addMacro(function (p) {
         if (typeof p.value === "undefined" && (p.index + 1 >= p.values.length) ) {
            p.value = '';
         }
     });
 
-    Taq.addMacro(function (p) {
+    window.Taq.addMacro(function (p) {
       var whitespace, newStrings = [''];
 
       if( isArray(p.value) ) {
